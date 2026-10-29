@@ -67,6 +67,27 @@ async function loadLocalDocument(id) {
   } catch (error) { localDocuments.set(id, { phase: 'error', error: error.message || '资料读取失败，请重试。' }); }
   if (localPageVisible()) render();
 }
+async function openObsidianTarget(target, button) {
+  if (!isLocalOrigin) { notify('请先接入本地模式，再请求 Obsidian 打开。'); return; }
+  const documentId = target?.documentId;
+  const lessonId = target?.lessonId;
+  const knownDocument = typeof documentId === 'string' && !lessonId && localState.documents.some(doc => doc.id === documentId);
+  const knownLesson = typeof lessonId === 'string' && !documentId && data.lessons.some(lesson => lesson.id === lessonId);
+  if (!knownDocument && !knownLesson) { notify('这份资料不在当前索引中，请重新选择。'); return; }
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch('/api/local/obsidian-open', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+      headers: { 'Content-Type': 'application/json', 'X-Learn-Lys-Action': 'open-obsidian' },
+      body: JSON.stringify(knownDocument ? { documentId } : { lessonId })
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || result?.launched !== true) throw new Error(typeof result?.error === 'string' ? result.error : '本地服务未能提交打开请求，请确认配置和 Obsidian 注册状态后重试。');
+    notify('已请求 Obsidian 打开，请查看桌面应用');
+  } catch (error) {
+    notify(error instanceof TypeError ? '无法连接本地服务，请确认已运行 npm run local。' : error.message || '打开请求失败，请检查本地配置。');
+  } finally { if (button) button.disabled = false; }
+}
 function localInstructions() {
   return `<div class="local-steps"><div><span>01</span><h3>启动本地服务</h3><p>在本机 learn-lys 仓库目录中运行：</p><code>npm run local</code><p>浏览器无法替你启动进程。首次使用前需要本地服务运行。</p></div><div><span>02</span><h3>切换到本机页面</h3><p>公开网页只提供入口。完整资料由本机页面同源读取，不传入公开站。</p><a class="button" href="http://127.0.0.1:4318/#local" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开本地学习模式 ↗</a></div><div><span>03</span><h3>阅读与整理</h3><p>本地资料索引、原文阅读与独立阅读记录；配合 Obsidian 编辑与管理。这里未接入云端 AI。</p></div></div>`;
 }
@@ -89,7 +110,9 @@ function localDocumentPage(id) {
   if (record.phase === 'loading') return localLoading();
   if (record.phase === 'error') return `<div class="empty-state"><h1>这份本地资料暂时无法打开</h1><p>${esc(record.error)}</p><button class="button" data-action="local-document-retry" data-id="${esc(id)}">重新读取</button> <a class="subtle-button" href="#local">返回本地资料库</a></div>`;
   const doc = record.document;
-  return `<a class="back-link" href="#local">← 本地资料库</a><header class="lesson-heading"><div class="lesson-meta"><span>${esc(doc.kind)} · 仅本机资料</span><span class="badge ${privateProgress.read.includes(id) ? 'done' : 'pending'}">${privateProgress.read.includes(id) ? '已阅读' : '未记录阅读'}</span></div><h1>${esc(doc.title)}</h1><p class="local-document-path">${esc(doc.relativePath)}</p><div class="lesson-actions"><button class="button" data-action="local-read" data-id="${esc(id)}">${privateProgress.read.includes(id) ? '已记录阅读 ✓' : '记录已阅读'}</button><a class="subtle-button" href="obsidian://open?vault=learn-lys&file=${encodeURIComponent(doc.obsidianPath)}">在 Obsidian 打开 ↗</a><a class="subtle-button" href="#local">返回本地索引</a></div><small class="muted">阅读记录仅保存在本机浏览器，与公开课程进度分开；不表示已掌握。Obsidian 需已打开对应 vault。</small></header><div class="reading-layout"><article class="prose" id="lesson-content">${doc.html}</article><aside class="reading-aside"><span class="eyebrow">ON THIS PAGE</span><nav id="lesson-toc" aria-label="本页目录"></nav><div class="reading-tip">本机原文阅读<br>未接入云端 AI</div></aside></div>`;
+  const obsidianReady = doc.obsidianTarget?.available === true;
+  const obsidianReason = obsidianReady ? '使用本地配置中已注册的知识库；打开请求由本机服务提交。' : doc.obsidianTarget?.reason || '未配置可打开的 Markdown 阅读卡。原文可继续在本地阅读器中查看。';
+  return `<a class="back-link" href="#local">← 本地资料库</a><header class="lesson-heading"><div class="lesson-meta"><span>${esc(doc.kind)} · 仅本机资料</span><span class="badge ${privateProgress.read.includes(id) ? 'done' : 'pending'}">${privateProgress.read.includes(id) ? '已阅读' : '未记录阅读'}</span></div><h1>${esc(doc.title)}</h1><p class="local-document-path">${esc(doc.relativePath)}</p><div class="lesson-actions"><button class="button" data-action="local-read" data-id="${esc(id)}">${privateProgress.read.includes(id) ? '已记录阅读 ✓' : '记录已阅读'}</button><button class="subtle-button" data-action="local-obsidian-open" data-id="${esc(id)}" ${obsidianReady ? '' : 'disabled'} title="${esc(obsidianReason)}">在 Obsidian 打开 ↗</button><a class="subtle-button" href="#local">返回本地索引</a></div><small class="muted">阅读记录仅保存在本机浏览器，与公开课程进度分开；不表示已掌握。${esc(obsidianReason)}</small></header><div class="reading-layout"><article class="prose" id="lesson-content">${doc.html}</article><aside class="reading-aside"><span class="eyebrow">ON THIS PAGE</span><nav id="lesson-toc" aria-label="本页目录"></nav><div class="reading-tip">本机原文阅读<br>未接入云端 AI</div></aside></div>`;
 }
 const statusClass = status => status === '已练习' ? 'done' : status === '学习中' ? 'current' : 'pending';
 const badge = status => `<span class="badge ${statusClass(status)}">${esc(status || '未开始')}</span>`;
@@ -165,14 +188,14 @@ function safeReference(url) {
   try { const parsed = new URL(url); return ['https:', 'http:'].includes(parsed.protocol) ? parsed.href : null; } catch { return null; }
 }
 function references() {
-  return `<div class="page-heading"><span class="eyebrow">READ FROM THE SOURCE</span><h1>资料库</h1><p>公开参考资料与本地知识库，各有清晰的位置。</p></div><section class="obsidian-panel"><span class="vault-icon">◇</span><div><span class="eyebrow">LOCAL FIRST</span><h2>用 Obsidian，积累自己的知识库。</h2><p>在本机打开名为 learn-lys 的仓库作为 vault，编辑公开笔记后重新构建，即可更新网页。完整资料和私人记录保留在本地；公开站点只展示经过筛选的内容。</p><a class="text-link" href="obsidian://open?vault=learn-lys">打开本机 Obsidian ↗</a><small>需要本机已安装 Obsidian，并已打开对应 vault。</small></div></section>${sectionTitle('PUBLIC REFERENCES', '公开阅读入口')}<div class="reference-list">${data.references.map((ref, i) => { const url = safeReference(ref.url); return `<article><span class="reference-index">${String(i + 1).padStart(2, '0')}</span><div><span class="eyebrow">${esc(ref.type || '参考资料')}</span><h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title)} ↗</a>` : esc(ref.title)}</h3><p>${esc(ref.availability || '')}</p></div></article>`; }).join('')}</div>${sectionTitle('WORDS THAT CONNECT IDEAS', '术语速查')}<div class="glossary">${data.glossary.map(g => `<div><dt>${esc(g.term)}</dt><dd>${esc(g.definition)}${data.lessons.some(l => l.id === g.lessonId) ? ` <a href="${lessonHref(g.lessonId)}" aria-label="查看${esc(g.term)}相关课程">↗</a>` : ''}</dd></div>`).join('')}</div>`;
+  return `<div class="page-heading"><span class="eyebrow">READ FROM THE SOURCE</span><h1>资料库</h1><p>公开参考资料与本地知识库，各有清晰的位置。</p></div><section class="obsidian-panel"><span class="vault-icon">◇</span><div><span class="eyebrow">LOCAL FIRST</span><h2>用 Obsidian，积累自己的知识库。</h2><p>在现有 Obsidian 知识库中整理课程和参考资料，通过本地配置连接对应学习目录。完整资料和私人记录保留在本地；公开站点只展示经过筛选的内容。</p><a class="text-link" href="#local">接入本地知识库 ↗</a><small>本机服务会检查目标知识库及资料卡配置，再提交桌面应用打开请求。</small></div></section>${sectionTitle('PUBLIC REFERENCES', '公开阅读入口')}<div class="reference-list">${data.references.map((ref, i) => { const url = safeReference(ref.url); return `<article><span class="reference-index">${String(i + 1).padStart(2, '0')}</span><div><span class="eyebrow">${esc(ref.type || '参考资料')}</span><h3>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title)} ↗</a>` : esc(ref.title)}</h3><p>${esc(ref.availability || '')}</p></div></article>`; }).join('')}</div>${sectionTitle('WORDS THAT CONNECT IDEAS', '术语速查')}<div class="glossary">${data.glossary.map(g => `<div><dt>${esc(g.term)}</dt><dd>${esc(g.definition)}${data.lessons.some(l => l.id === g.lessonId) ? ` <a href="${lessonHref(g.lessonId)}" aria-label="查看${esc(g.term)}相关课程">↗</a>` : ''}</dd></div>`).join('')}</div>`;
 }
 function lessonPage(id) {
   const index = data.lessons.findIndex(l => l.id === id);
   if (index < 0) return '<div class="empty-state"><h1>这篇笔记暂不可用</h1><p>它可能尚未公开，或链接已更新。</p><a class="button" href="#notes">返回知识笔记</a></div>';
   const lesson = data.lessons[index];
-  const obsidian = `obsidian://open?vault=learn-lys&file=${encodeURIComponent(lesson.path)}`;
-  return `<a class="back-link" href="#notes">← 知识笔记</a><header class="lesson-heading"><div class="lesson-meta"><span>${esc(lesson.kind || '概念')} / ${esc(lesson.minutes || 10)} 分钟</span>${badge(lessonStatus(lesson))}</div><h1>${esc(lesson.title)}</h1><p>${esc(lesson.summary)}</p><div class="lesson-actions"><button class="button" data-action="practice" data-id="${esc(id)}">${practiced(lesson) ? '已记录概念练习 ✓' : '记录已练习'}</button><button class="subtle-button" data-action="review" data-id="${esc(id)}">${progress.review.includes(id) ? '已加入复习 ✓' : '加入复习 ↺'}</button><a class="subtle-button" href="${obsidian}" title="仅本机已安装 Obsidian 并打开 learn-lys vault 时可用">在 Obsidian 打开 ↗</a></div><small class="muted">练习状态保存在本浏览器，不代表工程验收。本机 Obsidian 入口需要对应 vault。</small></header><div class="reading-layout"><article class="prose" id="lesson-content">${lesson.html}</article><aside class="reading-aside"><span class="eyebrow">ON THIS PAGE</span><nav id="lesson-toc" aria-label="本页目录"></nav><div class="reading-tip">先尝试自己解释，<br>再查看参考答案。</div></aside></div><nav class="lesson-neighbors" aria-label="相邻课程">${index ? `<a href="${lessonHref(data.lessons[index - 1].id)}"><small>← 上一篇</small><strong>${esc(data.lessons[index - 1].title)}</strong></a>` : '<span></span>'}${index < data.lessons.length - 1 ? `<a href="${lessonHref(data.lessons[index + 1].id)}"><small>下一篇 →</small><strong>${esc(data.lessons[index + 1].title)}</strong></a>` : '<a href="#review"><small>接下来 →</small><strong>回忆与练习</strong></a>'}</nav>`;
+  const obsidianAction = isLocalOrigin ? `<button class="subtle-button" data-action="local-obsidian-open" data-lesson-id="${esc(id)}">在 Obsidian 打开 ↗</button>` : '<a class="subtle-button" href="#local">接入本地后在 Obsidian 打开 ↗</a>';
+  return `<a class="back-link" href="#notes">← 知识笔记</a><header class="lesson-heading"><div class="lesson-meta"><span>${esc(lesson.kind || '概念')} / ${esc(lesson.minutes || 10)} 分钟</span>${badge(lessonStatus(lesson))}</div><h1>${esc(lesson.title)}</h1><p>${esc(lesson.summary)}</p><div class="lesson-actions"><button class="button" data-action="practice" data-id="${esc(id)}">${practiced(lesson) ? '已记录概念练习 ✓' : '记录已练习'}</button><button class="subtle-button" data-action="review" data-id="${esc(id)}">${progress.review.includes(id) ? '已加入复习 ✓' : '加入复习 ↺'}</button>${obsidianAction}</div><small class="muted">练习状态保存在本浏览器，不代表工程验收。Obsidian 打开需本地服务与已注册的知识库配置。</small></header><div class="reading-layout"><article class="prose" id="lesson-content">${lesson.html}</article><aside class="reading-aside"><span class="eyebrow">ON THIS PAGE</span><nav id="lesson-toc" aria-label="本页目录"></nav><div class="reading-tip">先尝试自己解释，<br>再查看参考答案。</div></aside></div><nav class="lesson-neighbors" aria-label="相邻课程">${index ? `<a href="${lessonHref(data.lessons[index - 1].id)}"><small>← 上一篇</small><strong>${esc(data.lessons[index - 1].title)}</strong></a>` : '<span></span>'}${index < data.lessons.length - 1 ? `<a href="${lessonHref(data.lessons[index + 1].id)}"><small>下一篇 →</small><strong>${esc(data.lessons[index + 1].title)}</strong></a>` : '<a href="#review"><small>接下来 →</small><strong>回忆与练习</strong></a>'}</nav>`;
 }
 function updateCalculator() {
   const form = $('#tensor-form');
@@ -233,7 +256,8 @@ document.addEventListener('click', event => {
   const button = event.target.closest('[data-action]');
   if (!button || !data) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action === 'local-retry') { localDocuments.clear(); connectLocal(); }
+  if (action === 'local-obsidian-open') { openObsidianTarget(button.dataset.lessonId ? { lessonId: button.dataset.lessonId } : { documentId: id }, button); }
+  else if (action === 'local-retry') { localDocuments.clear(); connectLocal(); }
   else if (action === 'local-clear-search') { $('#global-search').value = ''; render(); }
   else if (action === 'local-document-retry') { localDocuments.delete(id); render(); }
   else if (action === 'local-read') {

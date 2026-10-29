@@ -4,6 +4,7 @@ import { readFile, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { listLocalDocuments, getLocalDocument } from './local-library.mjs';
+import { resolveObsidianTarget, openInObsidian } from './obsidian.mjs';
 
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -14,7 +15,7 @@ const staticFiles = new Map([
   ['/data.json', ['data.json', 'application/json; charset=utf-8']],
 ]);
 
-export function createLocalServer({ root = process.cwd() } = {}) {
+export function createLocalServer({ root = process.cwd(), obsidian = {} } = {}) {
   const token = randomBytes(32).toString('hex');
   const cookieName = 'learn_lys_local';
   const server = http.createServer(async (request, response) => {
@@ -39,15 +40,37 @@ export function createLocalServer({ root = process.cwd() } = {}) {
     const foreign = ['cross-site', 'same-site'].includes(request.headers['sec-fetch-site']);
     const navigation = url.pathname === '/' && request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document';
     if (foreign && !navigation) return fail(403);
-    if (!['GET', 'HEAD'].includes(request.method)) return fail(404);
+    const nativeAction = request.method === 'POST' && url.pathname === '/api/local/obsidian-open';
+    if (!['GET', 'HEAD'].includes(request.method) && !nativeAction) return fail(404);
     try {
       if (url.pathname.startsWith('/api/')) {
         if (foreign) return fail(403);
         const value = request.headers.cookie?.split(';').map(part => part.trim()).find(part => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1) || '';
         if (!/^[a-f0-9]{64}$/.test(value) || !timingSafeEqual(Buffer.from(value), Buffer.from(token))) return fail(403);
+        if (nativeAction) {
+          if (request.headers.origin !== origin || request.headers['x-learn-lys-action'] !== 'open-obsidian' || request.headers['sec-fetch-site'] !== 'same-origin') return fail(403);
+          if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) return send(415, JSON.stringify({ error: '需要 JSON 请求。' }));
+          let body = '';
+          let bytes = 0;
+          for await (const chunk of request) {
+            bytes += chunk.length;
+            if (bytes > 2048) { send(413, JSON.stringify({ error: '请求过大。' })); return; }
+            body += chunk.toString('utf8');
+          }
+          let selection;
+          try { selection = JSON.parse(body); } catch { return send(400, JSON.stringify({ error: '无效请求。' })); }
+          const keys = selection && typeof selection === 'object' && !Array.isArray(selection) ? Object.keys(selection) : [];
+          if (keys.length !== 1 || !['documentId', 'lessonId'].includes(keys[0]) || typeof selection[keys[0]] !== 'string' || !/^[A-Za-z0-9_-]{1,1024}$/.test(selection[keys[0]])) return send(400, JSON.stringify({ error: '仅接受有效的课程或资料标识。' }));
+          const result = await openInObsidian(root, selection, obsidian);
+          return send(result.status, JSON.stringify(result.body));
+        }
         if (url.pathname === '/api/local/status') return send(200, JSON.stringify({ app: 'learn-lys', mode: 'local', version: 1 }));
         if (url.pathname === '/api/local/documents') return send(200, JSON.stringify({ documents: await listLocalDocuments(root) }));
-        if (url.pathname === '/api/local/document') return send(200, JSON.stringify({ document: await getLocalDocument(root, url.searchParams.get('id')) }));
+        if (url.pathname === '/api/local/document') {
+          const document = await getLocalDocument(root, url.searchParams.get('id'));
+          document.obsidianTarget = await resolveObsidianTarget(root, { documentId: document.id }, obsidian);
+          return send(200, JSON.stringify({ document }));
+        }
         return fail(404);
       }
       const file = staticFiles.get(url.pathname);

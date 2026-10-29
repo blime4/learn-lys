@@ -2,6 +2,7 @@ import { lstat, realpath, opendir, open, constants } from 'node:fs/promises';
 import path from 'node:path';
 import { marked, Renderer } from 'marked';
 import sanitizeHtml from 'sanitize-html';
+import { resolveProject, secureDirectory } from './local-config.mjs';
 
 const maxBytes = 5 * 1024 * 1024;
 const maxDocuments = 1000;
@@ -18,18 +19,11 @@ function validRelative(relative) {
 }
 
 async function libraryRoot(root) {
-  const base = path.resolve(root);
-  if ((await lstat(base)).isSymbolicLink()) throw new Error('Library unavailable');
-  let cursor = base;
-  for (const part of ['notes', 'private']) {
-    cursor = path.join(cursor, part);
-    const stat = await lstat(cursor);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Library unavailable');
-  }
-  return realpath(cursor);
+  const { projectRoot } = await resolveProject(root);
+  return secureDirectory(path.join(projectRoot, 'notes', 'private'));
 }
 
-async function readDocumentFile(base, relative, previewBytes = 0) {
+export async function readDocumentFile(base, relative, previewBytes = 0) {
   if (!validRelative(relative)) throw new Error('Not found');
   let cursor = base;
   for (const part of relative.split('/')) {
@@ -130,5 +124,6 @@ export async function getLocalDocument(root, id) {
     renderer.html = () => '';
     html = sanitizeDocument(marked.parse(markdown, { renderer }));
   }
-  return { ...document, html, obsidianPath: ['notes', 'private', relative].join('/') };
+  const { projectPath } = await resolveProject(root);
+  return { ...document, html, obsidianPath: [projectPath, 'notes', 'private', relative].filter(Boolean).join('/') };
 }
