@@ -1,0 +1,19 @@
+{
+  "name": "learn-lys",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Obsidian notes and a curated public learning site",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check:public": "node scripts/check-public.mjs",
+    "dev": "node scripts/serve.mjs"
+  },
+  "dependencies": {
+    "marked": "18.1.2",
+    "sanitize-html": "2.18.1",
+    "yaml": "2.9.1"
+  }
+}

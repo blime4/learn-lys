@@ -1,0 +1,9 @@
+[
+  "notes/public/01-data-volume.md",
+  "notes/public/02-bottlenecks.md",
+  "notes/public/03-local-reuse.md",
+  "notes/public/04-synchronization.md",
+  "notes/public/05-double-buffering.md",
+  "notes/public/06-tiling.md",
+  "notes/public/07-matmul.md"
+]

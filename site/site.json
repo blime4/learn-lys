@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "title": "learn-lys",
+    "subtitle": "从理解，到独立解决问题。",
+    "startDate": "2026-10-28",
+    "targetDate": "2027-01-28",
+    "currentLessonId": "matmul",
+    "version": "公开学习版",
+    "description": "以概念、练习与实验连接 GPU 编程知识。完整笔记在本地管理，本站展示通用知识与脱敏后的学习路线。"
+  },
+  "roadmap": [
+    {"id":"foundations","title":"建立计算与数据模型","weeks":"01–02","description":"从张量大小、数据搬运、同步与分块建立可推演的执行过程。","status":"学习中","topics":["张量形状与类型","瓶颈与有效带宽","局部存储与分块","同步与双缓冲"]},
+    {"id":"execution","title":"追踪一次完整执行","weeks":"03–04","description":"把任务提交、地址空间和执行依赖串起来，建立第一个可复现基线。","status":"未开始","topics":["执行路径","内存层级","任务依赖","基线实验"]},
+    {"id":"programming","title":"读懂并验证最小程序","weeks":"05–06","description":"理解编译接口、操作数与约束，用最小代码核对自己的预测。","status":"未开始","topics":["编译流程","接口与约束","最小程序","正确性测试"]},
+    {"id":"profiling","title":"用证据解释性能","weeks":"07–08","description":"先采集再归因，对照计算、访存与等待，完成一次有证据的改进。","status":"未开始","topics":["时间线","性能指标","瓶颈归因","对照实验"]},
+    {"id":"project","title":"深入模块解决问题","weeks":"09–10","description":"补齐所需资料，选择实际问题，产出最小复现和可评审方案。","status":"未开始","topics":["资料补齐","问题复现","源码追踪","方案验证"]},
+    {"id":"delivery","title":"独立交付与回顾","weeks":"11–12","description":"完成可运行、可解释、可复核的成果，回补薄弱知识点。","status":"未开始","topics":["真实交付","回归验证","技术评审","知识回顾"]}
+  ],
+  "references": [
+    {"title":"Study-Mate 学习工作流","url":"https://github.com/Miaotofu01/Study-Mate","type":"开源项目","availability":"可访问"},
+    {"title":"Obsidian 官方帮助","url":"https://help.obsidian.md/","type":"知识管理","availability":"可访问"},
+    {"title":"GitHub Pages 官方文档","url":"https://docs.github.com/en/pages","type":"发布指南","availability":"可访问"},
+    {"title":"TileLang 官方项目","url":"https://github.com/tile-ai/tilelang","type":"公开参考","availability":"可访问"},
+    {"title":"本地参考资料","url":"","type":"本地存档","availability":"仅本地"},
+    {"title":"待补充参考资料","url":"","type":"资料缺口","availability":"待访问"}
+  ],
+  "glossary": [
+    {"term":"Tensor 张量","definition":"用形状和数据类型描述的多维数据集合。","lessonId":"data-volume"},
+    {"term":"Effective bandwidth 有效带宽","definition":"某次实际传输在单位时间内完成的数据量。","lessonId":"bottlenecks"},
+    {"term":"Data reuse 数据复用","definition":"在需要的数据仍有效时多次使用，减少重复搬运。","lessonId":"local-reuse"},
+    {"term":"Synchronization 同步","definition":"协调参与者之间的执行依赖、完成与可见性。","lessonId":"synchronization"},
+    {"term":"Double buffering 双缓冲","definition":"使用两组空间交替安排搬运与计算，争取重叠执行。","lessonId":"double-buffering"},
+    {"term":"Tiling 分块","definition":"把大任务拆成适合有限资源处理的小块。","lessonId":"tiling"},
+    {"term":"Matrix multiplication 矩阵乘法","definition":"按行与列的对应乘积求和构成输出矩阵。","lessonId":"matmul"}
+  ]
+}

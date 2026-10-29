@@ -1,0 +1,15 @@
+# Local knowledge and source documents never enter the public repository.
+/learning-state.json
+/.obsidian/
+/首页.md
+/notes/*
+!/notes/public/
+/notes/public/**/private/
+/.reference/
+/.local/
+/.omc/
+/dist/
+/node_modules/
+*.log
+.DS_Store
+Thumbs.db
