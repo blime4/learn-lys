@@ -5,7 +5,92 @@ let data;
 let progress = { version: 1, practiced: [], review: [] };
 let activeTag = '';
 let toastTimer;
-const names = { home: '学习概览', roadmap: '学习路线', notes: '知识笔记', review: '练习与复习', references: '资料库', lesson: '课程阅读' };
+const names = { home: '学习概览', roadmap: '学习路线', notes: '知识笔记', review: '练习与复习', references: '资料库', lesson: '课程阅读', local: '本地知识库', 'local-document': '本地资料阅读' };
+const isLocalOrigin = location.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(location.hostname);
+const privateStorageKey = 'learn-lys-private-v1';
+let localState = { phase: 'idle', documents: [], error: '' };
+let privateProgress = { version: 1, read: [] };
+const localDocuments = new Map();
+function localHref(id) { return `#local-document/${encodeURIComponent(id)}`; }
+function currentRoute() { return location.hash.slice(1).split('/')[0]; }
+function localPageVisible() { return ['local', 'local-document'].includes(currentRoute()); }
+async function localRequest(path) {
+  if (!isLocalOrigin) throw new Error('请切换到本机页面后连接');
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+  if (!response.ok) throw new Error(response.status === 401 ? '本地会话尚未建立，请刷新本机页面后重试。' : `本地服务暂不可用（HTTP ${response.status}），请确认已运行 npm run local。`);
+  return response.json();
+}
+function readPrivateProgress() {
+  try {
+    const stored = localStorage.getItem(privateStorageKey);
+    if (!stored) return;
+    const value = JSON.parse(stored);
+    const known = new Set(localState.documents.map(d => d.id));
+    if (value.version !== 1 || !Array.isArray(value.read) || value.read.length > 10000 || value.read.some(id => typeof id !== 'string')) throw new Error('无效记录');
+    privateProgress = { version: 1, read: [...new Set(value.read.filter(id => known.has(id)))] };
+  } catch { notify('本地阅读记录暂时不可用；资料仍可正常阅读。'); }
+}
+async function connectLocal() {
+  if (!isLocalOrigin || localState.phase === 'loading') return;
+  localState = { ...localState, phase: 'loading', error: '' };
+  if (localPageVisible()) render();
+  try {
+    const status = await localRequest('/api/local/status');
+    if (status.app !== 'learn-lys' || status.mode !== 'local' || status.version !== 1) throw new Error('当前端口不是受支持的 learn-lys 本地服务。');
+    const result = await localRequest('/api/local/documents');
+    if (!Array.isArray(result.documents) || result.documents.some(d => !d || ['id', 'title', 'kind', 'relativePath'].some(k => typeof d[k] !== 'string'))) throw new Error('本地资料列表格式不正确，请更新或重启本地服务。');
+    localState = { phase: 'connected', documents: result.documents, error: '' };
+    readPrivateProgress();
+    $('#local-mode-bar').hidden = false;
+    $('.sidebar-bottom>small').textContent = 'LOCAL EDITION · 仅本机';
+    $('#global-search').placeholder = '搜索本地资料标题或路径…';
+    $('#global-search').setAttribute('aria-label', '搜索本地资料标题或路径');
+    $('.footer').innerHTML = '<span>learn-lys <i>·</i> 高级本地学习模式</span><span>资料仅在本机读取 · 未接入云端 AI</span>';
+  } catch (error) {
+    localState = { ...localState, phase: 'error', error: error.message || '连接失败，请确认本地服务已启动。' };
+  }
+  if (localPageVisible()) render();
+}
+async function loadLocalDocument(id) {
+  if (!isLocalOrigin || localState.phase !== 'connected' || localDocuments.has(id)) return;
+  if (!localState.documents.some(d => d.id === id)) {
+    localDocuments.set(id, { phase: 'error', error: '资料不在当前本地索引中，请返回本地资料库重新选择。' });
+    if (localPageVisible()) render();
+    return;
+  }
+  localDocuments.set(id, { phase: 'loading' });
+  try {
+    const result = await localRequest(`/api/local/document?id=${encodeURIComponent(id)}`);
+    const doc = result.document;
+    if (!doc || doc.id !== id || ['title', 'kind', 'relativePath', 'html', 'obsidianPath'].some(k => typeof doc[k] !== 'string')) throw new Error('本地资料格式不正确，暂时无法打开。');
+    localDocuments.set(id, { phase: 'loaded', document: doc });
+  } catch (error) { localDocuments.set(id, { phase: 'error', error: error.message || '资料读取失败，请重试。' }); }
+  if (localPageVisible()) render();
+}
+function localInstructions() {
+  return `<div class="local-steps"><div><span>01</span><h3>启动本地服务</h3><p>在本机 learn-lys 仓库目录中运行：</p><code>npm run local</code><p>浏览器无法替你启动进程。首次使用前需要本地服务运行。</p></div><div><span>02</span><h3>切换到本机页面</h3><p>公开网页只提供入口。完整资料由本机页面同源读取，不传入公开站。</p><a class="button" href="http://127.0.0.1:4318/#local" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开本地学习模式 ↗</a></div><div><span>03</span><h3>阅读与整理</h3><p>本地资料索引、原文阅读与独立阅读记录；配合 Obsidian 编辑与管理。这里未接入云端 AI。</p></div></div>`;
+}
+function localLanding() {
+  if (!isLocalOrigin) return `<div class="page-heading"><span class="eyebrow">YOUR KNOWLEDGE, ON YOUR MACHINE</span><h1>接入本地知识库</h1><p>公开站陪你学习通用知识，本地模式打开完整资料。两种模式各自读取自己的内容。</p></div><section class="local-intro"><span class="vault-icon" aria-hidden="true">⌘</span><div><span class="eyebrow">ADVANCED LOCAL MODE</span><h2>让完整知识，留在你自己的电脑里。</h2><p>本地资料不会被这个公开页面请求或展示。点击入口后，页面切换到本机，再确认连接状态。</p><a class="button" href="http://127.0.0.1:4318/#local" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">接入本地 · 打开本机页面 ↗</a><small>切换到本机后确认连接；需要本地服务已启动。</small></div></section>${localInstructions()}`;
+  if (localState.phase === 'idle') { queueMicrotask(connectLocal); return localLoading(); }
+  if (localState.phase === 'loading') return localLoading();
+  if (localState.phase === 'error') return localError(localState.error);
+  const query = $('#global-search').value.trim().toLocaleLowerCase();
+  const documents = localState.documents.filter(d => !query || `${d.title} ${d.relativePath}`.toLocaleLowerCase().includes(query));
+  return `<div class="page-heading"><span class="eyebrow">LOCAL KNOWLEDGE WORKSPACE</span><h1>高级本地学习模式</h1><p><span class="connection-state"><i aria-hidden="true"></i>已连接 · 仅本机</span> 完整资料在本机服务与当前本机页面之间读取。</p></div><div class="local-summary"><div><strong>${localState.documents.length}</strong><span>份本地资料</span></div><div><strong>${privateProgress.read.length}</strong><span>份已记录阅读</span></div><p>“已阅读”记录与公开课程练习进度分开保存，不代表已掌握或工程验收。搜索仅匹配标题与路径。</p><button class="subtle-button" data-action="local-retry">刷新资料索引 ↻</button></div><div class="section-title"><div><span class="eyebrow">LOCAL DOCUMENTS</span><h2>完整资料与学习记录</h2></div><span class="muted">${documents.length} 份</span></div><div class="local-document-list">${documents.map(doc => `<a class="local-document-item" href="${localHref(doc.id)}"><span class="local-doc-symbol" aria-hidden="true">▤</span><div><span class="eyebrow">${esc(doc.kind)}</span><h3>${esc(doc.title)}</h3><p>${esc(doc.relativePath)}</p></div><span class="badge ${privateProgress.read.includes(doc.id) ? 'done' : 'pending'}">${privateProgress.read.includes(doc.id) ? '已阅读' : '未记录阅读'}</span><span aria-hidden="true">↗</span></a>`).join('')}</div>${!documents.length ? '<div class="empty-state"><h2>没有匹配的本地资料</h2><p>尝试更短的关键词，或刷新资料索引。</p><button class="subtle-button" data-action="local-clear-search">清除搜索</button></div>' : ''}<div class="notice-block"><strong>本地模式的边界</strong><p>本页不具备自动连接云端模型的能力。正文仅在本机阅读，Obsidian 负责本地编辑，公开站继续展示脱敏课程。</p></div>`;
+}
+function localLoading() { return '<div class="loading"><span class="eyebrow">CONNECTING TO YOUR MACHINE</span><h1>正在确认本地连接…</h1><p>确认本地服务身份后，才读取本地资料索引。</p></div>'; }
+function localError(message) { return `<div class="page-heading"><span class="eyebrow">LOCAL CONNECTION</span><h1>尚未连接本地知识库</h1><p>${esc(message)}</p><button class="button" data-action="local-retry">重新确认连接 ↻</button></div>${localInstructions()}`; }
+function localDocumentPage(id) {
+  if (!isLocalOrigin) return localLanding();
+  if (localState.phase !== 'connected') return localLanding();
+  if (!localDocuments.has(id)) { queueMicrotask(() => loadLocalDocument(id)); return localLoading(); }
+  const record = localDocuments.get(id);
+  if (record.phase === 'loading') return localLoading();
+  if (record.phase === 'error') return `<div class="empty-state"><h1>这份本地资料暂时无法打开</h1><p>${esc(record.error)}</p><button class="button" data-action="local-document-retry" data-id="${esc(id)}">重新读取</button> <a class="subtle-button" href="#local">返回本地资料库</a></div>`;
+  const doc = record.document;
+  return `<a class="back-link" href="#local">← 本地资料库</a><header class="lesson-heading"><div class="lesson-meta"><span>${esc(doc.kind)} · 仅本机资料</span><span class="badge ${privateProgress.read.includes(id) ? 'done' : 'pending'}">${privateProgress.read.includes(id) ? '已阅读' : '未记录阅读'}</span></div><h1>${esc(doc.title)}</h1><p class="local-document-path">${esc(doc.relativePath)}</p><div class="lesson-actions"><button class="button" data-action="local-read" data-id="${esc(id)}">${privateProgress.read.includes(id) ? '已记录阅读 ✓' : '记录已阅读'}</button><a class="subtle-button" href="obsidian://open?vault=learn-lys&file=${encodeURIComponent(doc.obsidianPath)}">在 Obsidian 打开 ↗</a><a class="subtle-button" href="#local">返回本地索引</a></div><small class="muted">阅读记录仅保存在本机浏览器，与公开课程进度分开；不表示已掌握。Obsidian 需已打开对应 vault。</small></header><div class="reading-layout"><article class="prose" id="lesson-content">${doc.html}</article><aside class="reading-aside"><span class="eyebrow">ON THIS PAGE</span><nav id="lesson-toc" aria-label="本页目录"></nav><div class="reading-tip">本机原文阅读<br>未接入云端 AI</div></aside></div>`;
+}
 const statusClass = status => status === '已练习' ? 'done' : status === '学习中' ? 'current' : 'pending';
 const badge = status => `<span class="badge ${statusClass(status)}">${esc(status || '未开始')}</span>`;
 const practiced = lesson => progress.practiced.includes(lesson.id) || lesson.status === '已练习';
@@ -107,18 +192,22 @@ function prepareReading() {
   const article = $('#lesson-content');
   if (!article) return;
   const headings = [...article.querySelectorAll('h1,h2,h3')];
-  headings.forEach((h, index) => { h.id = `section-${index}`; });
-  $('#lesson-toc').innerHTML = headings.map(h => `<a href="#${esc(location.hash.slice(1).split('?')[0])}" data-scroll="${h.id}" class="toc-${h.tagName.toLowerCase()}">${esc(h.textContent)}</a>`).join('');
+  headings.forEach((h, index) => { if (!h.id) h.id = `section-${index}`; });
+  $('#lesson-toc').innerHTML = headings.map(h => `<a href="#${esc(location.hash.slice(1).split('?')[0])}" data-scroll="${esc(h.id)}" class="toc-${h.tagName.toLowerCase()}">${esc(h.textContent)}</a>`).join('');
+  if (currentRoute() === 'local-document') article.querySelectorAll('a').forEach(link => { link.rel = 'noopener noreferrer'; link.referrerPolicy = 'no-referrer'; });
 }
 function render() {
   let [route, id] = location.hash.slice(1).split('/');
   if (!route || route === 'main') route = 'home';
   try { id = id ? decodeURIComponent(id) : ''; } catch { id = ''; }
-  const view = ({ home, roadmap, notes, review, references })[route];
-  $('#main').innerHTML = route === 'lesson' ? lessonPage(id) : view ? view() : '<div class="empty-state"><h1>这里还没有内容</h1><a class="button" href="#home">返回学习概览</a></div>';
+  const view = ({ home, roadmap, notes, review, references, local: localLanding })[route];
+  $('#main').innerHTML = route === 'lesson' ? lessonPage(id) : route === 'local-document' ? localDocumentPage(id) : view ? view() : '<div class="empty-state"><h1>这里还没有内容</h1><a class="button" href="#home">返回学习概览</a></div>';
   $('#section-name').textContent = names[route] || '学习空间';
+  const searchingLocal = isLocalOrigin && localState.phase === 'connected' && localPageVisible();
+  $('#global-search').placeholder = searchingLocal ? '搜索本地资料标题或路径…' : '搜索笔记、知识点或标签…';
+  $('#global-search').setAttribute('aria-label', searchingLocal ? '搜索本地资料标题或路径' : '搜索笔记、知识点或标签');
   document.querySelectorAll('[data-nav]').forEach(link => {
-    const selected = link.dataset.nav === (route === 'lesson' ? 'notes' : route);
+    const selected = link.dataset.nav === (route === 'lesson' ? 'notes' : route === 'local-document' ? 'local' : route);
     link.classList.toggle('active', selected);
     if (selected) link.setAttribute('aria-current','page'); else link.removeAttribute('aria-current');
   });
@@ -127,6 +216,16 @@ function render() {
   updateCalculator();
 }
 document.addEventListener('click', event => {
+  const anchor = event.target.closest('#lesson-content a[href^="#"]');
+  if (anchor && !/^#(?:home|notes|roadmap|review|references|local|lesson\/|local-document\/)/.test(anchor.getAttribute('href'))) {
+    event.preventDefault();
+    let targetId = anchor.getAttribute('href').slice(1);
+    try { targetId = decodeURIComponent(targetId); } catch { /* Retain the literal anchor. */ }
+    const target = document.getElementById(targetId);
+    if (target) target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
+    else notify('当前段落锚点不可用，请使用右侧目录定位。');
+    return;
+  }
   const scroll = event.target.closest('[data-scroll]');
   if (scroll) { event.preventDefault(); document.getElementById(scroll.dataset.scroll)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }); return; }
   const tag = event.target.closest('[data-tag]');
@@ -134,7 +233,16 @@ document.addEventListener('click', event => {
   const button = event.target.closest('[data-action]');
   if (!button || !data) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action === 'practice') {
+  if (action === 'local-retry') { localDocuments.clear(); connectLocal(); }
+  else if (action === 'local-clear-search') { $('#global-search').value = ''; render(); }
+  else if (action === 'local-document-retry') { localDocuments.delete(id); render(); }
+  else if (action === 'local-read') {
+    if (!isLocalOrigin || localState.phase !== 'connected' || !localState.documents.some(d => d.id === id)) return;
+    if (!privateProgress.read.includes(id)) privateProgress.read.push(id);
+    try { localStorage.setItem(privateStorageKey, JSON.stringify(privateProgress)); } catch { notify('浏览器无法保存，本次阅读状态仅在当前页面保留。'); }
+    render(); notify('已记录本地阅读；理解与实际验证需要另外检查。');
+  }
+  else if (action === 'practice') {
     if (!data.lessons.some(l => l.id === id)) return;
     if (!progress.practiced.includes(id)) progress.practiced.push(id);
     save(); render(); notify('已记录概念练习；工程验收仍需实际证据。');
@@ -153,7 +261,10 @@ document.addEventListener('click', event => {
 document.addEventListener('input', event => { if (event.target.closest('#tensor-form')) updateCalculator(); });
 document.addEventListener('change', event => { if (event.target.closest('#tensor-form')) updateCalculator(); });
 document.addEventListener('submit', event => { if (event.target.id === 'tensor-form') event.preventDefault(); });
-$('#global-search').addEventListener('input', () => { if (location.hash !== '#notes') location.hash = '#notes'; else render(); });
+$('#global-search').addEventListener('input', () => {
+  const target = isLocalOrigin && localState.phase === 'connected' && localPageVisible() ? '#local' : '#notes';
+  if (location.hash !== target) location.hash = target; else render();
+});
 $('#import-file').addEventListener('change', async event => {
   const file = event.target.files[0];
   if (!file) return;
